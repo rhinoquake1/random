@@ -1,5 +1,13 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[1]:
+
+
 from bs4 import BeautifulSoup
 import requests
+from datetime import datetime
+import pandas as pd
 
 headers = {
     'authority': 'www.leeds.gov.uk',
@@ -55,10 +63,60 @@ data = {
 response = requests.post('https://www.leeds.gov.uk/residents/bins-and-recycling/check-your-bin-day', headers=headers, data=data)
 
 
+# In[2]:
+
+
 soup = BeautifulSoup(response.text, "html.parser")
 
-print(soup.find_all('div', {"class": "selectedContainer"}))
 
-class BinInfo:
-    def __init__(self) -> None:
-        pass
+# In[3]:
+
+
+data = soup.find('div', attrs={'id': lambda e: e.endswith('BinResultsDetails') if e else False})
+
+
+# In[4]:
+
+
+result = data.find_all('div', attrs={'class': 'selectedContainer'})
+
+
+# In[23]:
+
+
+dfs_cols = ['Bin', 'Dates']
+df = pd.DataFrame(columns=dfs_cols)
+
+
+def get_bin_type(raw_text):
+    # searches each word in sentence describing bin in pageweb until a match is found
+    # if there is no match the bin is sus 
+    bins = ['Black', 'Green', 'Brown']
+    words = raw_text.split(' ')
+    for bin in bins:
+        for word in words:
+                if bin.lower() in word.lower():
+                    return bin
+    return 'sus'
+
+# The bin type is give in tag h3
+# The subsequent dates are given as seperate li elements
+# the below will create a new row for the bin type and the date for collection
+for i in result:
+    bin_type = i.h3.contents[1]
+    bin_type = get_bin_type(bin_type)
+    for j in i.find_all('li'):
+        date = str(j.contents[0])
+        date = date[date.find(' ')+1:]
+        date = datetime.strptime(date, r'%d %b %Y').date()
+        df_row = pd.DataFrame([[bin_type, date]], columns=dfs_cols)
+        df = pd.concat([df, df_row])
+print(df.sort_values('Dates').reset_index(drop=True))
+    
+
+
+# In[24]:
+
+
+df = df.groupby(['Dates'])['Bin'].apply(list).reset_index()
+
