@@ -1,13 +1,21 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# jupyter nbconvert --to script 'bin_collection.ipynb'
+# 
+# pip3 freeze > requirements.txt
+
+# In[504]:
 
 
 from bs4 import BeautifulSoup
 import requests
-from datetime import datetime
+import datetime
 import pandas as pd
+
+# response request for curr address
+# need to create a more deynamic response where https://www.leeds.gov.uk/residents/bins-and-recycling/check-your-bin-day is opened
+# and the form is submitted with the address to get to get a dynamic request
 
 headers = {
     'authority': 'www.leeds.gov.uk',
@@ -63,25 +71,28 @@ data = {
 response = requests.post('https://www.leeds.gov.uk/residents/bins-and-recycling/check-your-bin-day', headers=headers, data=data)
 
 
-# In[2]:
+# In[505]:
 
 
+# convert to html
 soup = BeautifulSoup(response.text, "html.parser")
 
 
-# In[3]:
+# In[506]:
 
 
+# filter html to BinResultsDetails tag, and keep as soup
 data = soup.find('div', attrs={'id': lambda e: e.endswith('BinResultsDetails') if e else False})
 
 
-# In[4]:
+# In[507]:
 
 
+# returns seperate containers for each bin type
 result = data.find_all('div', attrs={'class': 'selectedContainer'})
 
 
-# In[23]:
+# In[508]:
 
 
 dfs_cols = ['Bin', 'Dates']
@@ -99,6 +110,7 @@ def get_bin_type(raw_text):
                     return bin
     return 'sus'
 
+# this iterates through each block bin to pull data
 # The bin type is give in tag h3
 # The subsequent dates are given as seperate li elements
 # the below will create a new row for the bin type and the date for collection
@@ -108,15 +120,130 @@ for i in result:
     for j in i.find_all('li'):
         date = str(j.contents[0])
         date = date[date.find(' ')+1:]
-        date = datetime.strptime(date, r'%d %b %Y').date()
+        date = datetime.datetime.strptime(date, r'%d %b %Y').date()
         df_row = pd.DataFrame([[bin_type, date]], columns=dfs_cols)
         df = pd.concat([df, df_row])
 print(df.sort_values('Dates').reset_index(drop=True))
     
 
 
-# In[24]:
+# In[509]:
 
 
+# Group by date and aggregate dates into lists
 df = df.groupby(['Dates'])['Bin'].apply(list).reset_index()
+
+
+# https://realpython.com/python-send-email/
+# Gmail req: Turn Allow less secure apps to ON. Be aware that this makes it easier for others to gain access to your account.
+
+# In[510]:
+
+
+import smtplib, ssl
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+def send_bin_email(bin_colour, msg_text):
+    port = 465  # For SSL
+    password = 'maggie_barker_22_2022'
+
+    sender_email = "rhinoquake@gmail.com"
+    receiver_email = "rhinoquake@gmail.com"
+
+    message = MIMEMultipart("alternative")
+    message["Subject"] = f'The {bin_colour} bin'
+    message["From"] = sender_email
+    message["To"] = receiver_email
+
+    # Create the plain-text and HTML version of your message
+    text = """    This isn't right >.<"""
+    html = msg_text
+
+    # Turn these into plain/html MIMEText objects
+    part1 = MIMEText(text, "plain")
+    part2 = MIMEText(html, "html")
+
+    # Add HTML/plain-text parts to MIMEMultipart message
+    # The email client will try to render the last part first
+    message.attach(part1)
+    message.attach(part2)
+
+    # Create secure connection with server and send email
+    context = ssl.create_default_context()
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
+        server.login(sender_email, password)
+        server.sendmail(
+            sender_email, receiver_email, message.as_string()
+        )
+
+
+# In[513]:
+
+
+df = df.reindex(columns=dfs_cols) # reorder columns
+df['Bin'] = df.apply(lambda x: '& '.join(x['Bin']), axis = 1) # combines the lists in each row with an &
+next_bins = df.iloc[0] # next bin collection
+
+
+# In[514]:
+
+
+df['Dates'] = pd.to_datetime(df['Dates']) # convert date vals to datetime types
+df['date'] = df['Dates'].dt.day_name() + ' ' + df['Dates'].dt.strftime(r'%d %b %y') # format the date to: Dayname Day Mon Yr
+
+
+# In[515]:
+
+
+df
+
+
+# In[544]:
+
+
+email_table = df.iloc[1:8] # next x collections
+email_table : pd.DataFrame = email_table.drop('Dates', axis=1).to_html(index=False, header=False, classes='table, th, td style="width:100%;padding:200px;border-collapse:collapse;', border=0)
+
+
+# In[545]:
+
+
+email_table
+
+
+# In[561]:
+
+
+# the email text starts with saying which bin is due for collection the next day. It then gives the next x collections as a table
+consolidated_email_text = f'''
+<html>
+<body>
+<p>Hi,<br>
+        It's me, the {next_bins.Bin} bin<br>
+        Please take me out tonight (∩︵∩)<br>
+        Thx xoxo
+    </p>
+<p><small>btw, please don't forget about my fwiends ^-^</h3>\n
+{email_table}
+</p></small></body>
+</html>
+'''
+
+
+# In[562]:
+
+
+def send_bin_email_day_before(next_bins, consolidated_email_text, check_date=True):
+    if check_date:
+        if next_bins.Dates == (date.today() + datetime.timedelta(days=1)):
+            send_bin_email(next_bins.Bin, consolidated_email_text)
+    else:
+        send_bin_email(next_bins.Bin, consolidated_email_text)
+
+
+# In[ ]:
+
+
+send_bin_email_day_before(next_bins, consolidated_email_text)
 
